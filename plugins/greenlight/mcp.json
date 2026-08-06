@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "greenlight": {
+      "url": "https://prod.greenlight.shifthq.ai/mcp"
+    }
+  }
+}
