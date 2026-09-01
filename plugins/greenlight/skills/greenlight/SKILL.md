@@ -126,8 +126,41 @@ jumps straight into an existing app still needs the org's conventions. Then: rea
 (`knowledgeList({ scope: 'integration', integration })` + `knowledgeGet`) before writing
 data-access code; `knowledgeSearch({ query })` when you're stuck; `knowledgePropose({ …, rationale })`
 when you learn something future sessions need — it files a proposal for human review, never a
-direct edit. Each has a CLI twin (`greenlight knowledge list/get/search/propose`). There is no tool
-that returns the enforced pipeline rules; infer policy from pipeline output and the manifest.
+direct edit. Each has a CLI twin (`greenlight knowledge list/get/search/propose`). For the enforced pipeline
+rules, call `getPolicies()` — it returns each check with its enforcement level and any config,
+such as the approved base-image list, so you can satisfy the gate before pushing rather than
+after it fails. A check reporting `inactive_reason` will not fire, so do not code around it.
+
+**Never invent the company's mark.** Wherever an app shows the **organization's** logo,
+wordmark, or favicon — a header, a login screen, a nav bar, a footer, a favicon — look up the real
+one and use it:
+
+```
+knowledgeAssetList({ scope: 'org' })                      # or filter: { role: 'logo-primary' }
+# Address the result with its own entry_topic and slug — do not guess a topic:
+knowledgeAssetGet({ scope: 'org', topic: <entry_topic>, slug: <slug> })
+```
+
+**If nothing is attached, leave the company mark out.** Do not draw one, do not substitute a
+lookalike, do not set the company name in a typeface and call it a wordmark. A plausible-looking
+logo that is not the company's is worse than no logo — it is a claim about the organization,
+shipped into a governed app, that nobody approved.
+
+**An app's own icon is different.** That is the app's identity, not the company's, so you may
+design one. If the org has an `icon`-role asset, copy it to `.greenlight/icon.svg` so the app gets
+a branded dashboard tile; if it has none, design an app icon rather than skipping it.
+
+Fetch the bytes and **commit the file into the repo** (`public/logo.svg`). The download URL
+expires — it is a fetch handle, never something the deployed app references. The CLI does fetch,
+checksum-verify, and write in one step:
+
+```
+greenlight knowledge asset get org/design-system/logo-primary --out public/logo.svg
+```
+
+When several assets share a role, prefer app-scope over org-scope, then the `theme` matching the
+surface you are building. Assets are read-only to you: IT uploads them in the dashboard, and
+`knowledgePropose` carries prose, never files.
 
 **Knowledge is a best-effort head start, not a precondition.** Check it — it often saves real work —
 but do not assume an entry exists for a given org, app, or integration, or that any entry it does
@@ -188,6 +221,7 @@ time out), or pass `--timeout <seconds>`; confirm completion with `greenlight wh
 | Verify a deployed response                                    | `curlApp`                                                                 | `curl --app <id> --path <p>`                       |
 | Metrics (point / series)                                      | `getMetrics` / `getMetricsSeries`                                         | `metrics` / `metrics series --app <id>`            |
 | Knowledge (read / propose)                                    | `knowledgeList` / `knowledgeGet` / `knowledgeSearch` / `knowledgePropose` | `knowledge list` / `get` / `search` / `propose`    |
+| Brand assets — the real logo/icon, never invented             | `knowledgeAssetList` / `knowledgeAssetGet`                                | `knowledge asset list` / `knowledge asset get`     |
 | Clone the repo (minted token)                                 | `getRepoAccess`                                                           | `repo clone --app <id>`                            |
 | Refresh an expired repo token on a checkout                   | `getRepoAccess` → `git remote set-url`                                    | `repo refresh --app <id> [--dir <d>]`              |
 | Run locally — app env with `--app`, else your own grants      | —                                                                         | `run [--app <id>] -- <cmd>` (after `pair`/`login`) |
@@ -232,9 +266,9 @@ The standard new-app loop:
    The app sits idle, at zero cost, until the first merge. Returns `app_id` and a short-lived
    clone token.
 2. **Clone and write code — showing the user as you go.** Fill in the required `docs` block (the
-   pipeline blocks deploy without it), a `README.md`, and `.greenlight/icon.svg` — a dashboard icon
-   for the app, authored the same way: by you, unprompted, never something you ask the user to
-   request or approve (see _A default dashboard icon_ below for what makes a good one). Write your
+   pipeline blocks deploy without it), a `README.md` (see _A default README_ below), and
+   `.greenlight/icon.svg` — a dashboard icon for the app. Author the README and icon the same way:
+   by you, unprompted, never something you ask the user to request or approve. Write your
    `Dockerfile` and `src/`. As soon as there is anything to render, run the app locally and put it
    in front of the user — see _Show your work_. Until the first merge the app's own grants and
    resources don't exist, so run it in **user mode** on your own requested access (see _Local
@@ -269,6 +303,39 @@ _Sync with `main` before editing_), edit `greenlight.yml` and/or code, show the 
 locally, PR, merge, verify. **Every change ends with verification** — there is no "done" you
 report without having watched the requested behavior work.
 
+**A default README.** Every new app ships with a root `README.md` — you author it in step 2 above,
+without being asked. The pipeline requires the file to be present; the structure below is what
+makes it useful to the next human or agent who opens the repo. Do not ask whether a README is
+wanted; the only override is the user proactively saying they don't want one. Use this shape:
+
+```
+# App Name
+One-paragraph description of what this app does.
+
+## Quick Start
+1. Clone the repo
+2. Install dependencies: `npm install` (or the stack equivalent)
+3. Set up environment: `greenlight run` supplies real values for granted credentials; for
+   user-delegated sources write your own `.env` fixtures
+4. Run the dev server: `greenlight run -- npm run dev` (or plain `npm run dev` with fixtures)
+
+## Commands
+| Command         | Description              |
+| --------------- | ------------------------ |
+| `npm run dev`   | Start development server |
+| `npm test`      | Run tests                |
+| `npm run build` | Production build         |
+| `npm run lint`  | Run linter               |
+
+## Architecture
+Brief overview of the project structure and key design decisions.
+
+## Contributing
+How to contribute, coding standards, PR process.
+```
+
+Adapt package-manager commands to the stack you chose; keep the section headings.
+
 **A default dashboard icon.** Every new app ships with `.greenlight/icon.svg` — you author it in
 step 2 above, the same way you author `README.md`, without being asked. Make it simple, distinct,
 tasteful, and reflective of what the app does; legible at dashboard-tile size matters more than
@@ -288,6 +355,7 @@ two most-skipped steps (showing the user before shipping, and verifying after de
 Ship progress:
 - [ ] Checkout synced with main before editing (Sync with main before editing)
 - [ ] Change built and running locally (greenlight run)
+- [ ] README.md authored (new app)
 - [ ] .greenlight/icon.svg authored (new app)
 - [ ] User has seen it working in the preview (Show your work)
 - [ ] Env names declared + values set (no MISSING_ENV_VALUE at merge)
@@ -533,14 +601,29 @@ Greenlight injects **managed** env vars into the running pod, derived from what 
 declares. Your code reads them from the environment; you never declare or set them, and `envSet`
 rejects them as reserved.
 
-| If the manifest declares…                         | The pod receives…                                               |
-| ------------------------------------------------- | --------------------------------------------------------------- |
-| `resources:` with `kind: postgres`                | `DATABASE_URL`                                                  |
-| `resources:` with `kind: blob`                    | `STORAGE_ACCESS_URL`, `STORAGE_CONTAINER_NAME`                  |
-| a `grants:` entry for a **proxied** integration   | `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL`                   |
-| a `grants:` entry for an **injected** integration | that integration's credential, under its own fixed env-var name |
-| an `ai_*` grant _(post-MVP)_                      | `GREENLIGHT_AI_KEY`, `GREENLIGHT_AI_BASE_URL`                   |
-| always (a `web` workload)                         | `PORT`                                                          |
+| If the manifest declares…                         | The pod receives…                                                                                                  |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `resources:` with `kind: postgres`                | `DATABASE_URL`                                                                                                     |
+| `resources:` with `kind: blob`                    | `STORAGE_CONTAINER_NAME` always; `STORAGE_ACCESS_URL` and `STORAGE_OBJECT_PREFIX` when present — see the blob note |
+| a `grants:` entry for a **proxied** integration   | `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL`                                                                      |
+| a `grants:` entry for an **injected** integration | that integration's credential, under its own fixed env-var name                                                    |
+| an `ai_*` grant _(post-MVP)_                      | `GREENLIGHT_AI_KEY`, `GREENLIGHT_AI_BASE_URL`                                                                      |
+| always (a `web` workload)                         | `PORT`                                                                                                             |
+
+**Blob access: use the variables you were given, all of them.** `getApp` lists the app's exact
+managed variables. Read that list and follow it:
+
+- **`STORAGE_CONTAINER_NAME`** is always the container or bucket you open. Pass it to your storage
+  SDK as-is.
+- **`STORAGE_OBJECT_PREFIX`**, when present, is where your app's objects live inside that container.
+  Prepend it to every object key. It appears when apps share one bucket, and writing outside it is
+  refused — this is enforced, not a convention.
+- **`STORAGE_ACCESS_URL`**, when present, is a pre-authorized URL for the container; use it directly.
+  When it is absent the container is reached by the pod's own identity instead, so let your SDK pick
+  up ambient credentials (`@google-cloud/storage` with Application Default Credentials; the AWS
+  SDK's default provider chain) — you never handle a key either way.
+
+Treat every one of these as absent-until-listed rather than assuming a fixed set.
 
 Whether a grant delivers the proxy pair (**proxied**) or a direct credential under a fixed name
 (**injected**) is a property of the integration (`delivery_mode`), not the manifest — so the exact
@@ -632,7 +715,7 @@ and route. The contract (some items pipeline-enforced, others recommended):
 
   Any value within the cap always deploys; a value above it is rejected at PR time
   (`POLICY_VIOLATION`, `workload-compute-limit`), never at runtime. Full reference:
-  [docs/34 § compute](https://github.com/ShiftEngineering/greenlight/blob/main/docs/34-workloads.md).
+  [greenlight.yml — workloads / compute](https://greenlightbyshift.com/docs/reference/greenlight-yml/).
 
 - **Runtime security posture:** the namespace enforces Pod Security Admission `baseline` with
   `restricted` warnings/audits. Pods run with user namespaces (`hostUsers: false`),
