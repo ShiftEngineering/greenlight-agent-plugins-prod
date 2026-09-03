@@ -97,11 +97,36 @@ them together):
    naming conventions).
 3. Org Knowledge — `knowledgeList({ scope: 'org' })` — customer-specific conventions and context.
 
+**Ground before you ask, and re-ground after a compaction.** The three calls above come before the
+intake questions, not after: the answers you offer depend on what the org actually has. If your
+context was summarized or compacted, **call `listGrantableIntegrations` again** rather than
+trusting what an earlier turn said it returned. It is read-only, cheap, and the org's connected
+systems change without warning; a remembered list is how you end up promising a system this
+company does not have.
+
 Then **open with what's possible at their company**: name the data sources you could wire in (by
 friendly name — "your CRM", "your ticketing system" — whatever the integration list actually
 returns), mention any existing app that overlaps, and make 2–3 concrete suggestions tailored to
 what they said (or to their role, if they said nothing). You are the one who knows what Greenlight
 can do here; lead with it.
+
+**When nothing is connected, say so.** If `listGrantableIntegrations` comes back empty, do not
+quietly drop the data-source part of the conversation or skip the question. Tell the user their
+company hasn't connected any systems to Greenlight yet, that their IT administrator is the one who
+connects them (in Greenlight, under Integrations), and that you can still build the app with data
+it stores itself. Never silence, never an omitted section.
+
+**When they name a system the company doesn't have, say that too.** A user who asks to pull from a
+vendor or tool that isn't in the list gets a plain answer, not a guess, a hallucinated grant, or an
+attempt to reach that vendor's API directly: it isn't connected to Greenlight, here is what is, and
+IT can connect it. Then offer the closest thing you can actually build. The same applies mid-build:
+a `grants:` entry naming an unregistered integration is refused at merge, and the refusal lists the
+org's available slugs, so a mistyped or abbreviated slug is correctable from the error alone (see
+_A complete greenlight.yml_).
+
+**Do not offer to request a new connection.** You cannot file one, and neither can the user from
+inside their agent. Point at IT and stop there; promising a request you can't make is worse than
+saying you can't.
 
 Then gather intent as a **short structured intake** — a few product questions with selectable
 options, not an engineering interview. Use your environment's structured-question affordance (a
@@ -111,7 +136,7 @@ form, a multiple-choice prompt) when it has one; otherwise ask the same things i
 - Who will use it? _(just me / my team / the whole company)_
 - Does it need to remember data between visits? _(yes, save records / yes, files too / no / not sure)_
 - Should it pull from any company systems? — offer the actual integrations you discovered, by
-  friendly name.
+  friendly name. If none are connected, say so instead of dropping the question.
 
 Map the answers yourself and keep the mapping invisible: "save records" → a postgres resource;
 "files too" → blob; a named company system → a grant; "whole company" → nothing special (SSO
@@ -384,7 +409,7 @@ delivers real secret values into a local process, which never crosses MCP. The m
   merge the app has no grants or resources of its own, so request what the app needs under your own
   identity (`requestCredentialAccess`) and build the whole thing locally against real proxied data.
   The same mode covers no-app work — scripts, notebooks, data exploration. It never injects
-  `DATABASE_URL` or `STORAGE_ACCESS_URL` (app resources are app-scoped).
+  app-scoped resources (`DATABASE_URL`, blob storage).
 - **App mode — `greenlight run --app <app_id> -- <your dev command>`** (e.g.
   `greenlight run --app 3f25… -- npm run dev`) resolves the **app's** env contract server-side —
   the same grants the deployed pod runs on, so local access mirrors production exactly. The
@@ -454,7 +479,9 @@ the grant is the gate. At MVP:
 - **Granted injected integration** → the real credential, in-process. Live.
 - **User-delegated integration** → no laptop actor token exists; author a fixture.
 - **App's own Postgres** → a local fixture database; `DATABASE_URL` is not injected locally.
-- **Blob** → a freshly minted short-TTL credential. Live (app mode only).
+- **Blob** → a freshly minted short-TTL credential is still injected (app mode only) until
+  cutover; the access path is the [storage skill](../storage/SKILL.md) copy-in client against the
+  proxy, not that credential. Live.
 
 For anything still fixture-only — a manual-approval credential, a declined personal request, or an
 unreachable control plane (corporate egress block) — write your own fixtures/mocks for that
@@ -517,7 +544,11 @@ Before you add or change a `grants:` entry, call `listGrantableIntegrations` (or
 integrations list`) to see which integrations and credential slugs the org has registered, whether
 each is `injected` or `proxied`, and to copy its ready-made `manifest_grant_example` straight into
 `greenlight.yml`. It is read-only and returns no secrets — a grant naming a slug it does not list
-(or one marked `configured: false`) cannot be approved.
+(or one marked `configured: false`) cannot be approved. Both refusals name the org's available
+integration slugs back to you: the merge-time policy denial and the deploy failure each carry
+`available_integrations`, so a mistyped or abbreviated slug is a one-line fix rather than a dead
+end. An empty list there means the org has connected nothing yet — tell the user and point at IT
+(see _Starting from an idea_), don't retry.
 
 Grants are request signals, not merge blockers: an auto-approved grant works the moment the PR
 merges; an IT-required grant deploys in `pending` and the proxy returns `403` for it until IT
@@ -541,7 +572,9 @@ the **user's own identity** instead:
 - **Request** with `requestCredentialAccess({ integration, credential_slug, reason })` (or
   `greenlight request --integration <slug> --credential <slug> --reason "..."`). The result is
   `granted` immediately when the credential auto-approves, else `pending` for IT review — tell the
-  user to expect IT approval in that case.
+  user to expect IT approval in that case. An integration the org hasn't registered is refused with
+  the available slugs in `details.available_integrations`; correct the slug from that, or, if it is
+  empty, tell the user nothing is connected yet rather than re-requesting.
 - **Use** with `greenlight run -- <cmd>` (no `--app`): the process gets `GREENLIGHT_PROXY_URL` + a
   user-scoped `GREENLIGHT_DATA_KEY` resolving the user's own granted integrations through the same
   governed proxy. No credential lands on the laptop for proxied integrations.
@@ -624,29 +657,22 @@ Greenlight injects **managed** env vars into the running pod, derived from what 
 declares. Your code reads them from the environment; you never declare or set them, and `envSet`
 rejects them as reserved.
 
-| If the manifest declares…                         | The pod receives…                                                                                                  |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `resources:` with `kind: postgres`                | `DATABASE_URL`                                                                                                     |
-| `resources:` with `kind: blob`                    | `STORAGE_CONTAINER_NAME` always; `STORAGE_ACCESS_URL` and `STORAGE_OBJECT_PREFIX` when present — see the blob note |
-| a `grants:` entry for a **proxied** integration   | `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL`                                                                      |
-| a `grants:` entry for an **injected** integration | that integration's credential, under its own fixed env-var name                                                    |
-| an `ai_*` grant _(post-MVP)_                      | `GREENLIGHT_AI_KEY`, `GREENLIGHT_AI_BASE_URL`                                                                      |
-| always (a `web` workload)                         | `PORT`                                                                                                             |
+| If the manifest declares…                         | The pod receives…                                                                  |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `resources:` with `kind: postgres`                | `DATABASE_URL`                                                                     |
+| `resources:` with `kind: blob`                    | `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL` — see [storage](../storage/SKILL.md) |
+| a `grants:` entry for a **proxied** integration   | `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL`                                      |
+| a `grants:` entry for an **injected** integration | that integration's credential, under its own fixed env-var name                    |
+| an `ai_*` grant _(post-MVP)_                      | `GREENLIGHT_AI_KEY`, `GREENLIGHT_AI_BASE_URL`                                      |
+| always (a `web` workload)                         | `PORT`                                                                             |
 
-**Blob access: use the variables you were given, all of them.** `getApp` lists the app's exact
-managed variables. Read that list and follow it:
+**Blob access is a focused Skill.** When the manifest declares `kind: blob`, read the bundled
+[storage skill](../storage/SKILL.md) in full before writing object I/O. It owns the copy-in client,
+key encoding, end-user authorization, and the app-relay download pattern. Keep following this core
+skill for the surrounding Greenlight manifest, env, local-development, delivery, and verification
+workflow.
 
-- **`STORAGE_CONTAINER_NAME`** is always the container or bucket you open. Pass it to your storage
-  SDK as-is.
-- **`STORAGE_OBJECT_PREFIX`**, when present, is where your app's objects live inside that container.
-  Prepend it to every object key. It appears when apps share one bucket, and writing outside it is
-  refused — this is enforced, not a convention.
-- **`STORAGE_ACCESS_URL`**, when present, is a pre-authorized URL for the container; use it directly.
-  When it is absent the container is reached by the pod's own identity instead, so let your SDK pick
-  up ambient credentials (`@google-cloud/storage` with Application Default Credentials; the AWS
-  SDK's default provider chain) — you never handle a key either way.
-
-Treat every one of these as absent-until-listed rather than assuming a fixed set.
+Treat every managed name as absent-until-listed rather than assuming a fixed set.
 
 Whether a grant delivers the proxy pair (**proxied**) or a direct credential under a fixed name
 (**injected**) is a property of the integration (`delivery_mode`), not the manifest — so the exact
@@ -658,8 +684,8 @@ redeploys, and a pending injected grant does **not** give the app `GREENLIGHT_DA
 for proxied grants). `getApp`/`envList` reflect this — a pending injected grant shows its
 `env_var_name` on the grant but does not list it as a managed name. The fixed reserved set — rejected by `envSet` and the manifest validator regardless of
 what the app declares — is `DATABASE_URL`, `STORAGE_ACCESS_URL`, `STORAGE_ACCESS_TOKEN`,
-`STORAGE_ENDPOINT`, `STORAGE_CONTAINER_NAME`, `STORAGE_SAS_URL` (Azure legacy alias for
-`STORAGE_ACCESS_URL`, deprecation-window only — prefer `STORAGE_ACCESS_URL`),
+`STORAGE_ENDPOINT`, `STORAGE_CONTAINER_NAME`, `STORAGE_OBJECT_PREFIX`, `STORAGE_SAS_URL`,
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `DATABASE_SERVER_CA_CERT`,
 `GREENLIGHT_DATA_KEY`, `GREENLIGHT_PROXY_URL`, `PORT`, `GREENLIGHT_AI_KEY`,
 `GREENLIGHT_AI_BASE_URL`, `PUBLIC_BASE_URL`, `DEV_USER_EMAIL`, `DEV_USER_GROUPS`; each injected
 integration additionally reserves its own env-var name per-app. User-declared names must match
@@ -809,6 +835,13 @@ Treat the token as opaque and request-scoped: never inspect, log, store, or reus
 request that carried it — reuse misattributes data access. Background work (startup tasks, timers,
 queue consumers, scheduled jobs) has no user and no token: workload attribution is the correct
 outcome there, so never mint or replay a token for it.
+
+### Blob storage
+
+Before writing object I/O, copying in a storage client, or serving a file to a browser, read the
+bundled [storage skill](../storage/SKILL.md) in full. It owns the copy-in client, key encoding,
+end-user authorization, and the app-relay download pattern. Keep following this core skill for the
+surrounding Greenlight manifest, env, local-development, delivery, and verification workflow.
 
 ### Connected databases
 
