@@ -2,7 +2,7 @@
   "mcpServers": {
     "greenlight": {
       "type": "http",
-      "url": "https://prod.greenlight.shifthq.ai/mcp",
+      "url": "https://apps.shifthq.ai/mcp",
       "alwaysLoad": true
     }
   }

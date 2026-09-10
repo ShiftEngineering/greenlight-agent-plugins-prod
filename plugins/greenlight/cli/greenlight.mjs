@@ -18016,7 +18016,7 @@ async function cmdWhoami(apiBase) {
 }
 
 // packages/cli/src/config.ts
-var BUNDLED_MCP_URL = "https://prod.greenlight.shifthq.ai/mcp";
+var BUNDLED_MCP_URL = "https://apps.shifthq.ai/mcp";
 function resolveApiBase() {
   const override = process.env["GREENLIGHT_API_URL"];
   const raw = override && override.trim() !== "" ? override : BUNDLED_MCP_URL;
